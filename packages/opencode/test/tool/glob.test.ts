@@ -20,12 +20,29 @@ import { Filesystem } from "@/util/filesystem"
 import { Permission } from "../../src/permission"
 import type * as Tool from "../../src/tool/tool"
 
-const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
+const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.Replacements = []) =>
   LayerNode.compile(
     LayerNode.group([CrossSpawnSpawner.node, FSUtil.node, Ripgrep.node, Truncate.node, Agent.node, Git.node]),
+    replacements,
   )
 
 const it = testEffect(toolLayer())
+const signals: AbortSignal[] = []
+const controlled = testEffect(
+  toolLayer({}, [
+    [
+      Ripgrep.node,
+      Layer.succeed(
+        Ripgrep.Service,
+        Ripgrep.Service.of({
+          glob: (input) => Effect.sync(() => (signals.push(input.signal!), [])),
+          find: () => Effect.die("unused"),
+          grep: () => Effect.die("unused"),
+        }),
+      ),
+    ],
+  ]),
+)
 const full = (p: string) => (process.platform === "win32" ? Filesystem.normalizePath(p) : p)
 
 const ctx = {
@@ -86,6 +103,21 @@ const git = Effect.fn("GlobToolTest.git")(function* (cwd: string, args: string[]
 })
 
 describe("tool.glob", () => {
+  controlled.instance("forwards cancellation to ripgrep", () =>
+    Effect.gen(function* () {
+      signals.length = 0
+      const controller = new AbortController()
+      const info = yield* GlobTool
+      const glob = yield* info.init()
+      yield* glob.execute({ pattern: "*.ts" }, { ...ctx, abort: controller.signal })
+
+      expect(signals).toHaveLength(1)
+      expect(signals[0]?.aborted).toBe(false)
+      controller.abort()
+      expect(signals[0]?.aborted).toBe(true)
+    }),
+  )
+
   it.instance("matches files from a directory path", () =>
     Effect.gen(function* () {
       const test = yield* TestInstance

@@ -22,13 +22,30 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Git } from "@/git"
 import { Filesystem } from "@/util/filesystem"
 
-const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}) =>
+const toolLayer = (flags: Partial<RuntimeFlags.Info> = {}, replacements: LayerNode.Replacements = []) =>
   LayerNode.compile(
     LayerNode.group([CrossSpawnSpawner.node, FSUtil.node, Ripgrep.node, Truncate.node, Agent.node, Git.node]),
+    replacements,
   )
 
 const it = testEffect(toolLayer())
 const rooted = testEffect(Layer.mergeAll(toolLayer(), testInstanceStoreLayer))
+const signals: AbortSignal[] = []
+const controlled = testEffect(
+  toolLayer({}, [
+    [
+      Ripgrep.node,
+      Layer.succeed(
+        Ripgrep.Service,
+        Ripgrep.Service.of({
+          glob: () => Effect.die("unused"),
+          find: () => Effect.die("unused"),
+          grep: (input) => Effect.sync(() => (signals.push(input.signal!), [])),
+        }),
+      ),
+    ],
+  ]),
+)
 
 const ctx = {
   sessionID: SessionID.make("ses_test"),
@@ -77,6 +94,21 @@ const git = Effect.fn("GrepToolTest.git")(function* (cwd: string, args: string[]
 })
 
 describe("tool.grep", () => {
+  controlled.instance("forwards cancellation to ripgrep", () =>
+    Effect.gen(function* () {
+      signals.length = 0
+      const controller = new AbortController()
+      const info = yield* GrepTool
+      const grep = yield* info.init()
+      yield* grep.execute({ pattern: "needle" }, { ...ctx, abort: controller.signal })
+
+      expect(signals).toHaveLength(1)
+      expect(signals[0]?.aborted).toBe(false)
+      controller.abort()
+      expect(signals[0]?.aborted).toBe(true)
+    }),
+  )
+
   rooted.live("basic search", () =>
     Effect.gen(function* () {
       const info = yield* GrepTool

@@ -47,7 +47,12 @@ export const GlobTool = Tool.define(
           })
 
           const limit = 100
-          const files = yield* ripgrep.glob({ cwd: search, pattern: params.pattern, limit })
+          const files = yield* ripgrep.glob({
+            cwd: search,
+            pattern: params.pattern,
+            limit,
+            signal: AbortSignal.any([ctx.abort, AbortSignal.timeout(30_000)]),
+          })
           const truncated = files.length === limit
 
           const output = []

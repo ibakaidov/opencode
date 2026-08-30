@@ -65,6 +65,7 @@ export const GrepTool = Tool.define(
             pattern: params.pattern,
             include: params.include,
             limit: 100,
+            signal: AbortSignal.any([ctx.abort, AbortSignal.timeout(30_000)]),
           })
           if (result.length === 0) return empty
 
